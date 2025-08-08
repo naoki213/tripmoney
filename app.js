@@ -315,3 +315,12 @@ function renderStatsAndChart() {
     legend.appendChild(item);
   });
 }
+
+// ====== Google Sheets 連携設定 ======
+const GSHEETS = {
+  API_KEY: "AIzaSyCl16O5UWCsDdNB3o2M8m4osCj5TlatXX0",
+  CLIENT_ID: "217890720524-tgpuqqv60m8pv1t3evn17a15d52jsrki.apps.googleusercontent.com",
+  SPREADSHEET_ID: "11GyzKABbLvZ54uy7XfwwUPCNcoPMAn0PB_mzdxZ0tm4",
+  DISCOVERY_DOC: "https://sheets.googleapis.com/$discovery/rest?version=v4",
+  SCOPE: "https://www.googleapis.com/auth/spreadsheets"
+};
