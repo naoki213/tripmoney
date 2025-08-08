@@ -155,8 +155,8 @@ function toast(msg, ok=true){
 
 // ====== 保存処理（※この関数は1つだけ） ======
 function onSave() {
-  const date    = state.selectedDate;
-  const type    = state.selectedType;
+  const date      = state.selectedDate;
+  const type      = state.selectedType;
   const amountJPY = Math.round(parseFloat(qs("#amountJPY").value || "0"));
   const amountEUR = parseFloat(qs("#amountEUR").value || "0");
   const eurRate   = parseFloat(qs("#eurRateInput").value || "0");
@@ -243,11 +243,30 @@ function renderList() {
     const del = document.createElement("button");
     del.className = "del";
     del.textContent = "削除";
-    del.addEventListener("click", () => {
-      if (confirm("この記録を削除しますか？")) {
+    del.addEventListener("click", async () => {
+      if (!confirm("この記録を削除しますか？")) return;
+
+      try {
+        // 1) サインイン済みなら、上書き前にクラウド最新を取り込む（他端末追加分を温存）
+        if (authed) {
+          // トークン延命ヘルパーを入れている人は次行を有効化
+          // await ensureSignedIn();
+          await loadAllFromSheet(true);
+        }
+
+        // 2) ローカルから1件削除
         state.records = state.records.filter(r => r.id !== rec.id);
         saveRecords(state.records);
         syncUI();
+
+        // 3) サインイン済みなら、ローカル全件をSheetsへ上書き（＝削除反映）
+        if (authed) {
+          await pushAllToSheet();
+          cloudToast("Sheetsからも削除しました");
+        }
+      } catch (err) {
+        cloudToast("削除同期に失敗: " + (err.message || err), false);
+        console.error(err);
       }
     });
 
@@ -433,7 +452,8 @@ async function handleSyncClick(){
     await pushAllToSheet();
     cloudToast("Sheetsに同期しました");
   } catch(e){
-    cloudToast("同期失敗: " + e.message, false);
+    cloudToast("同期失敗: " + (e.message || e.statusText || e), false);
+    console.error(e);
   }
 }
 
