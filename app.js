@@ -324,3 +324,230 @@ const GSHEETS = {
   DISCOVERY_DOC: "https://sheets.googleapis.com/$discovery/rest?version=v4",
   SCOPE: "https://www.googleapis.com/auth/spreadsheets"
 };
+let gapiInited = false;
+let gisInited = false;
+let tokenClient = null;
+let authed = false; // サインイン状態
+
+document.addEventListener("DOMContentLoaded", () => {
+  renderDateTabs();
+  renderTypeButtons();
+  initRate();
+  attachEvents();
+  initCloudButtons();      // ←追加
+  loadGapiAndGis();        // ←追加: gapi & GIS ローダ
+  syncUI();
+});
+
+function onSave() {
+  // ...（既存の保存処理）
+  state.records.unshift(rec);
+  saveRecords(state.records);
+
+  // Sheetsにも保存（サインイン済みのときだけ）
+  if (authed) {
+    appendRecordToSheet(rec).then(()=>{
+      cloudToast("Sheetsに保存しました");
+    }).catch(err=>{
+      cloudToast("Sheets保存に失敗: " + err.message, false);
+    });
+  }
+
+  // ...（UI更新など）
+}
+
+// ====== クラウド（Sheets）関連 ======
+function initCloudButtons(){
+  qs("#signinBtn").addEventListener("click", handleAuthClick);
+  qs("#signoutBtn").addEventListener("click", handleSignoutClick);
+  qs("#syncBtn").addEventListener("click", handleSyncClick);
+}
+
+function cloudToast(msg, ok=true){
+  const el = qs("#cloudToast");
+  el.textContent = msg;
+  el.style.color = ok ? "#0a2a45" : "#b00020";
+  el.classList.add("show");
+  setTimeout(()=> el.classList.remove("show"), 2200);
+}
+
+function setCloudButtons(){
+  qs("#signinBtn").disabled = !(gapiInited && gisInited) || authed;
+  qs("#signoutBtn").disabled = !authed;
+  qs("#syncBtn").disabled = !authed;
+}
+
+// gapi & GIS を読み込み
+function loadGapiAndGis(){
+  // gapi.js は script タグで読み込み済み。onload が無いのでポーリングで待機
+  const waitGapi = new Promise((res)=>{
+    const t = setInterval(()=>{
+      if (window.gapi && window.gapi.load) {
+        clearInterval(t);
+        gapi.load("client", async ()=>{
+          await gapi.client.init({
+            apiKey: GSHEETS.API_KEY,
+            discoveryDocs: [GSHEETS.DISCOVERY_DOC],
+          });
+          gapiInited = true;
+          setCloudButtons();
+          // gapi準備できたら一度ロード試行（未認可でもOK）
+          // サインイン後に改めて同期する
+        });
+        res();
+      }
+    }, 100);
+  });
+
+  // GIS（Google Identity Services）も待機
+  const waitGIS = new Promise((res)=>{
+    const t = setInterval(()=>{
+      if (window.google && window.google.accounts && window.google.accounts.oauth2) {
+        clearInterval(t);
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: GSHEETS.CLIENT_ID,
+          scope: GSHEETS.SCOPE,
+          callback: (response) => {
+            if (response && response.access_token) {
+              authed = true;
+              setCloudButtons();
+              cloudToast("サインインしました");
+              // 初回サインイン後にクラウド→ローカルへ取り込み
+              loadAllFromSheet(true).catch(err=>{
+                cloudToast("Sheets読込に失敗: " + err.message, false);
+              });
+            }
+          },
+        });
+        gisInited = true;
+        setCloudButtons();
+        res();
+      }
+    }, 100);
+  });
+
+  Promise.all([waitGapi, waitGIS]).then(()=> setCloudButtons());
+}
+
+function handleAuthClick(){
+  if (!tokenClient) return;
+  tokenClient.requestAccessToken({ prompt: "consent" });
+}
+function handleSignoutClick(){
+  // アクセストークンを取り消し（ユーザー体験簡便化のためページ更新で十分なことが多い）
+  authed = false;
+  setCloudButtons();
+  cloudToast("サインアウトしました");
+}
+async function handleSyncClick(){
+  try {
+    await pushAllToSheet();
+    cloudToast("Sheetsに同期しました");
+  } catch(e){
+    cloudToast("同期失敗: " + e.message, false);
+  }
+}
+
+// 1レコードを末尾に追加
+async function appendRecordToSheet(rec){
+  ensureAuthed();
+  const values = [[
+    rec.id, rec.date, rec.type,
+    rec.amountJPY, rec.amountEUR ?? "",
+    rec.eurRate ?? "", rec.eurMarkup ?? "",
+    rec.detail ?? "", rec.createdAt
+  ]];
+  // ヘッダーが無い場合に備えてA1起点でINSERT_ROWS
+  return gapi.client.sheets.spreadsheets.values.append({
+    spreadsheetId: GSHEETS.SPREADSHEET_ID,
+    range: "Sheet1!A1",
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    resource: { values }
+  });
+}
+
+// シート全体を読み込んで state.records を置き換え（merge=false）
+async function loadAllFromSheet(replaceLocal=false){
+  ensureAuthed();
+  const res = await gapi.client.sheets.spreadsheets.values.get({
+    spreadsheetId: GSHEETS.SPREADSHEET_ID,
+    range: "Sheet1!A1:Z100000"
+  });
+
+  const rows = res.result.values || [];
+  if (!rows.length) {
+    // ヘッダーを作成
+    await ensureHeaderRow();
+    return;
+  }
+
+  // 1行目がヘッダーかどうか判定（id っぽいか）
+  let start = 0;
+  if (rows[0] && rows[0][0] === "id") start = 1;
+
+  const recs = rows.slice(start).map(r => ({
+    id: r[0],
+    date: r[1],
+    type: r[2],
+    amountJPY: Number(r[3]||0),
+    amountEUR: r[4] ? Number(r[4]) : null,
+    eurRate: r[5] ? Number(r[5]) : null,
+    eurMarkup: r[6] ? Number(r[6]) : null,
+    detail: r[7] || "",
+    createdAt: r[8] ? Number(r[8]) : Date.now()
+  })).filter(x => x.id);
+
+  if (recs.length){
+    // 置き換え or マージ（今回は置き換え推奨）
+    if (replaceLocal) {
+      state.records = recs.sort((a,b)=> b.createdAt - a.createdAt);
+      saveRecords(state.records);
+      syncUI();
+    }
+  } else {
+    await ensureHeaderRow();
+  }
+}
+
+// ローカル全件をシートに反映（ヘッダー作成→本体を一括書き込み）
+async function pushAllToSheet(){
+  ensureAuthed();
+  await clearSheet();
+  await ensureHeaderRow();
+  if (!state.records.length) return;
+  const values = state.records.slice().reverse().map(rec => [
+    rec.id, rec.date, rec.type,
+    rec.amountJPY, rec.amountEUR ?? "",
+    rec.eurRate ?? "", rec.eurMarkup ?? "",
+    rec.detail ?? "", rec.createdAt
+  ]);
+  return gapi.client.sheets.spreadsheets.values.append({
+    spreadsheetId: GSHEETS.SPREADSHEET_ID,
+    range: "Sheet1!A1",
+    valueInputOption: "RAW",
+    insertDataOption: "INSERT_ROWS",
+    resource: { values }
+  });
+}
+
+async function ensureHeaderRow(){
+  const header = [["id","date","type","amountJPY","amountEUR","eurRate","eurMarkup","detail","createdAt"]];
+  return gapi.client.sheets.spreadsheets.values.update({
+    spreadsheetId: GSHEETS.SPREADSHEET_ID,
+    range: "Sheet1!A1:I1",
+    valueInputOption: "RAW",
+    resource: { values: header }
+  });
+}
+
+async function clearSheet(){
+  return gapi.client.sheets.spreadsheets.values.clear({
+    spreadsheetId: GSHEETS.SPREADSHEET_ID,
+    range: "Sheet1!A:Z"
+  });
+}
+
+function ensureAuthed(){
+  if (!authed) throw new Error("サインインしていません");
+}
