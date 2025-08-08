@@ -1,0 +1,116 @@
+:root{
+  --bg:#f6fbff;
+  --card:#ffffff;
+  --ink:#133047;
+  --muted:#5f7a91;
+  --accent:#7bb8ff;     /* 淡い青 */
+  --accent-strong:#3f9cff;
+  --accent-ink:#0a2a45;
+  --danger:#ff6464;
+  --ring:rgba(63,156,255,.35);
+  --shadow:0 8px 24px rgba(19,48,71,0.08);
+  --radius:16px;
+}
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--bg);color:var(--ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+  -webkit-font-smoothing:antialiased; line-height:1.5;
+}
+
+.app-header{
+  position:sticky; top:0; z-index:10;
+  background:linear-gradient(180deg, #e9f4ff, rgba(233,244,255,0.6));
+  border-bottom:1px solid #e0eefc;
+  padding:16px 16px 12px;
+  backdrop-filter: blur(6px);
+}
+.app-header h1{margin:0;font-size:20px;font-weight:800; color:var(--accent-ink)}
+.app-header .sub{color:var(--muted);font-size:12px;margin-top:2px}
+
+.container{padding:14px; max-width:880px; margin:0 auto}
+.card{
+  background:var(--card); border:1px solid #e7eef6; border-radius:var(--radius);
+  padding:16px; margin:12px 0; box-shadow:var(--shadow);
+}
+h2{font-size:16px;margin:0 0 12px;color:var(--accent-ink)}
+.label{display:block;font-size:13px;color:var(--muted);margin-bottom:6px}
+.block{margin-bottom:12px}
+
+.date-tabs, .type-buttons{
+  display:flex; flex-wrap:wrap; gap:8px;
+}
+.pill{
+  padding:10px 12px; border-radius:999px; border:1px solid #d9e8f8; background:#fff;
+  color:var(--accent-ink); font-weight:600; font-size:14px;
+  transition: all .15s ease; user-select:none;
+}
+.pill:hover{transform: translateY(-1px)}
+.pill.active{background:var(--accent); color:#063056; border-color:#b5dcff; box-shadow:0 0 0 3px var(--ring)}
+
+.rate-row{display:flex; gap:12px; flex-wrap:wrap}
+.rate-col{flex:1 1 260px}
+input[type="number"], input[type="text"]{
+  width:100%; padding:12px 14px; border:1px solid #dbe7f5; border-radius:12px; font-size:16px;
+  background:#fff; outline:none; transition:box-shadow .15s ease, border-color .15s ease;
+}
+input:focus{border-color:var(--accent); box-shadow:0 0 0 4px var(--ring)}
+
+.hint{font-size:12px; color:var(--muted); margin-top:6px}
+.eff-rate{font-size:14px; background:#eef6ff; border:1px dashed #cde1fa; padding:10px 12px; border-radius:12px}
+
+.grid-2{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+@media (max-width:640px){ .grid-2{grid-template-columns:1fr} }
+
+.actions{display:flex; align-items:center; gap:12px}
+.btn-primary{
+  appearance:none; border:0; border-radius:14px; padding:12px 18px; font-weight:800;
+  background:linear-gradient(180deg, var(--accent-strong), #3a8ef8); color:white; cursor:pointer;
+  box-shadow:0 6px 14px rgba(63,156,255,.25); font-size:16px;
+}
+.btn-primary:active{transform:translateY(1px)}
+
+.toast{
+  min-height:20px; font-size:14px; color:var(--accent-ink);
+  opacity:0; transition:opacity .2s ease; padding:6px 0;
+}
+.toast.show{opacity:1}
+
+.budget-row{
+  display:flex; gap:12px; flex-wrap:wrap; align-items:baseline; margin-bottom:8px;
+}
+.remain{font-size:18px; font-weight:900; color:#064a7a}
+.spent{font-size:14px; color:var(--muted)}
+
+.chart-wrap{position:relative; width:100%; max-width:520px; margin:0 auto}
+.legend{display:flex; flex-wrap:wrap; gap:10px; justify-content:center; margin-top:10px}
+.legend .item{display:flex; align-items:center; gap:8px; color:#245}
+.legend .dot{width:12px;height:12px;border-radius:50%}
+
+.record-list{list-style:none; margin:0; padding:0}
+.record{
+  display:grid; grid-template-columns: 90px 1fr auto; gap:10px; align-items:center;
+  padding:12px; border:1px solid #e7eef6; border-radius:12px; margin-bottom:8px; background:#fff;
+}
+@media (max-width:520px){
+  .record{grid-template-columns: 84px 1fr auto}
+}
+.record .date{font-weight:800; color:#0a385c}
+.record .meta{font-size:12px; color:var(--muted)}
+.record .amount{font-weight:900; color:#0e466f}
+.del{
+  appearance:none; background:#fff; color:var(--danger); border:1px solid #ffd1d1;
+  padding:8px 12px; border-radius:12px; cursor:pointer; font-weight:700;
+}
+.del:hover{background:#fff5f5}
+
+.empty{
+  text-align:center; color:var(--muted); padding:16px; border:1px dashed #cfe0f4; border-radius:12px;
+  background:#fbfdff;
+}
+
+.app-footer{
+  color:var(--muted); text-align:center; padding:24px 12px; font-size:12px;
+}
