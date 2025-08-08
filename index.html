@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Trip Budget (9/12–9/22)</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <h1>旅行家計簿</h1>
+    <div class="sub">9/12–9/22 / 総予算 800,000円</div>
+  </header>
+
+  <main class="container">
+
+    <!-- ① 入力 -->
+    <section class="card" id="input-area">
+      <h2>① 入力</h2>
+
+      <!-- 日付（固定ボタン 9/12–9/22） -->
+      <div class="block">
+        <label class="label">日付</label>
+        <div id="dateTabs" class="date-tabs"></div>
+      </div>
+
+      <!-- 種類（固定6種） -->
+      <div class="block">
+        <label class="label">種類</label>
+        <div id="typeButtons" class="type-buttons"></div>
+      </div>
+
+      <!-- レート設定（手入力。実効は×1.05） -->
+      <div class="block rate-row">
+        <div class="rate-col">
+          <label class="label">EUR→JPY レート（手入力）</label>
+          <input type="number" id="eurRateInput" inputmode="decimal" step="0.01" min="0" value="175" />
+          <div class="hint">ユーロ換算時は <strong>この値 × 1.05</strong> で円計上</div>
+        </div>
+        <div class="rate-col">
+          <div class="eff-rate">実効レート（×1.05）：<span id="effectiveRate">183.75</span> 円/€</div>
+        </div>
+      </div>
+
+      <!-- 金額 -->
+      <div class="block grid-2">
+        <div>
+          <label class="label">金額（円）</label>
+          <input type="number" id="amountJPY" inputmode="numeric" min="0" placeholder="例: 2400" />
+        </div>
+        <div>
+          <label class="label">金額（ユーロ）</label>
+          <input type="number" id="amountEUR" inputmode="decimal" step="0.01" min="0" placeholder="例: 12" />
+        </div>
+      </div>
+
+      <!-- 詳細 -->
+      <div class="block">
+        <label class="label">詳細（任意）</label>
+        <input type="text" id="detail" placeholder="例: パニーノ / バス切符 など" />
+      </div>
+
+      <!-- 保存 -->
+      <div class="actions">
+        <button id="saveBtn" class="btn-primary">保存</button>
+        <div id="toast" class="toast" role="status" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- ② グラフ -->
+    <section class="card" id="graph-area">
+      <h2>② グラフ</h2>
+      <div class="budget-row">
+        <div class="remain">残 <span id="remainAmount">800,000</span> 円</div>
+        <div class="spent">使った合計 <span id="spentAmount">0</span> 円</div>
+      </div>
+      <div class="chart-wrap">
+        <canvas id="pieChart" aria-label="カテゴリ別支出円グラフ" role="img"></canvas>
+      </div>
+      <div class="legend" id="chartLegend"></div>
+    </section>
+
+    <!-- ③ 記録 -->
+    <section class="card" id="list-area">
+      <h2>③ 記録</h2>
+      <div id="emptyState" class="empty">まだ記録がありません。</div>
+      <ul id="recordList" class="record-list"></ul>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    <small>ローカル保存 / GitHub Pagesで配信可</small>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
+
