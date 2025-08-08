@@ -7,6 +7,11 @@
   <link rel="stylesheet" href="style.css" />
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+
+<!-- 必須: Google APIとGIS -->
+  <script async defer src="https://apis.google.com/js/api.js"></script>
+  <script async defer src="https://accounts.google.com/gsi/client"></script>
+
 </head>
 <body>
   <header class="app-header">
@@ -69,6 +74,18 @@
       </div>
     </section>
 
+    <!-- ① 入力セクションの下あたりか、ヘッダー右側など好きな場所に配置 -->
+<section class="card" id="cloud-area">
+  <h2>クラウド（Google Sheets）</h2>
+  <div class="actions">
+    <button id="signinBtn" class="btn-primary" disabled>Googleにサインイン</button>
+    <button id="signoutBtn" class="del" disabled>サインアウト</button>
+    <button id="syncBtn" class="btn-primary" disabled>今すぐ同期</button>
+  </div>
+  <div class="hint">同じGoogleアカウントでサインインすると、端末間で記録を共有できます。</div>
+  <div id="cloudToast" class="toast" role="status" aria-live="polite"></div>
+</section>
+
     <!-- ② グラフ -->
     <section class="card" id="graph-area">
       <h2>② グラフ</h2>
@@ -87,6 +104,7 @@
       <h2>③ 記録</h2>
       <div id="emptyState" class="empty">まだ記録がありません。</div>
       <ul id="recordList" class="record-list"></ul>
+
     </section>
 
   </main>
