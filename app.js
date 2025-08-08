@@ -7,6 +7,7 @@ const CATEGORIES = [
   "宿泊費","交通費","食費","観光代","土産代","その他"
 ];
 
+// 円グラフ配色（視認性重視）
 const COLORS = [
   "#ff4d4d", // 赤
   "#4d79ff", // 青
@@ -16,9 +17,8 @@ const COLORS = [
   "#ffd24d"  // 黄
 ];
 
-
 // ====== ユーティリティ ======
-const qs = (s, el=document) => el.querySelector(s);
+const qs  = (s, el=document) => el.querySelector(s);
 const qsa = (s, el=document) => [...el.querySelectorAll(s)];
 const fmtJPY = (n) => (Math.round(n)||0).toLocaleString("ja-JP");
 
@@ -26,7 +26,7 @@ const fmtJPY = (n) => (Math.round(n)||0).toLocaleString("ja-JP");
 function buildFixedDates() {
   const dates = [];
   const start = new Date(TRIP_YEAR, 8, 12); // 月は0始まり: 8=9月
-  const end = new Date(TRIP_YEAR, 8, 22);
+  const end   = new Date(TRIP_YEAR, 8, 22);
   for (let d = new Date(start); d <= end; d.setDate(d.getDate()+1)) {
     const y = d.getFullYear();
     const m = d.getMonth()+1;
@@ -40,11 +40,8 @@ function buildFixedDates() {
 
 // ストレージ
 function loadRecords() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-  } catch {
-    return [];
-  }
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+  catch { return []; }
 }
 function saveRecords(list) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
@@ -58,15 +55,18 @@ let state = {
   chart: null,
 };
 
-// ====== 初期化 ======
+// ====== 初期化（※1回だけ） ======
 document.addEventListener("DOMContentLoaded", () => {
   renderDateTabs();
   renderTypeButtons();
   initRate();
   attachEvents();
+  initCloudButtons();   // Google Sheets 連携ボタン
+  loadGapiAndGis();     // Google SDK ロード
   syncUI();
 });
 
+// ====== UI構築 ======
 function renderDateTabs() {
   const wrap = qs("#dateTabs");
   wrap.innerHTML = "";
@@ -82,9 +82,7 @@ function renderDateTabs() {
       highlightDateTab(d.iso);
     });
     wrap.appendChild(btn);
-    if (i === 0) { // 初期選択は最初の日
-      state.selectedDate = d.iso;
-    }
+    if (i === 0) state.selectedDate = d.iso; // 初期選択は最初の日
   });
   highlightDateTab(state.selectedDate);
 }
@@ -122,7 +120,7 @@ function initRate() {
   const eff = qs("#effectiveRate");
   const updateEff = () => {
     const base = parseFloat(eurRateInput.value || "0");
-    const effVal = base * 1.022;
+    const effVal = base * 1.022; // ← 指定倍率
     eff.textContent = isFinite(effVal) ? effVal.toFixed(2) : "0";
     // EUR入力→JPY自動変換
     const eur = parseFloat(qs("#amountEUR").value || "0");
@@ -155,13 +153,14 @@ function toast(msg, ok=true){
   setTimeout(()=> el.classList.remove("show"), 1800);
 }
 
+// ====== 保存処理（※この関数は1つだけ） ======
 function onSave() {
-  const date = state.selectedDate;
-  const type = state.selectedType;
+  const date    = state.selectedDate;
+  const type    = state.selectedType;
   const amountJPY = Math.round(parseFloat(qs("#amountJPY").value || "0"));
   const amountEUR = parseFloat(qs("#amountEUR").value || "0");
-  const eurRate = parseFloat(qs("#eurRateInput").value || "0");
-  const detail = qs("#detail").value.trim();
+  const eurRate   = parseFloat(qs("#eurRateInput").value || "0");
+  const detail    = qs("#detail").value.trim();
 
   if (!date) { toast("日付を選択してください", false); return; }
   if (!type) { toast("種類を選択してください", false); return; }
@@ -169,7 +168,7 @@ function onSave() {
 
   let finalJPY = amountJPY;
   if (!finalJPY && amountEUR) {
-    const effVal = eurRate * 1.022;
+    const effVal = eurRate * 1.022; // ← 指定倍率
     finalJPY = Math.round(amountEUR * effVal);
   }
 
@@ -185,8 +184,19 @@ function onSave() {
     createdAt: Date.now()
   };
 
+  // 先にローカル保存
   state.records.unshift(rec);
   saveRecords(state.records);
+
+  // サインイン済みなら Sheets にも自動保存
+  if (authed) {
+    appendRecordToSheet(rec).then(()=>{
+      cloudToast("Sheetsに保存しました");
+    }).catch(err=>{
+      cloudToast("Sheets保存に失敗: " + err.message, false);
+    });
+  }
+
   // 入力クリア（種類と日付は保持）
   qs("#amountJPY").value = "";
   qs("#amountEUR").value = "";
@@ -245,7 +255,6 @@ function renderList() {
     li.appendChild(mid);
     li.appendChild(amt);
     li.appendChild(del);
-
     list.appendChild(li);
   });
 }
@@ -329,42 +338,20 @@ let gisInited = false;
 let tokenClient = null;
 let authed = false; // サインイン状態
 
-document.addEventListener("DOMContentLoaded", () => {
-  renderDateTabs();
-  renderTypeButtons();
-  initRate();
-  attachEvents();
-  initCloudButtons();      // ←追加
-  loadGapiAndGis();        // ←追加: gapi & GIS ローダ
-  syncUI();
-});
-
-function onSave() {
-  // ...（既存の保存処理）
-  state.records.unshift(rec);
-  saveRecords(state.records);
-
-  // Sheetsにも保存（サインイン済みのときだけ）
-  if (authed) {
-    appendRecordToSheet(rec).then(()=>{
-      cloudToast("Sheetsに保存しました");
-    }).catch(err=>{
-      cloudToast("Sheets保存に失敗: " + err.message, false);
-    });
-  }
-
-  // ...（UI更新など）
-}
-
 // ====== クラウド（Sheets）関連 ======
 function initCloudButtons(){
-  qs("#signinBtn").addEventListener("click", handleAuthClick);
-  qs("#signoutBtn").addEventListener("click", handleSignoutClick);
-  qs("#syncBtn").addEventListener("click", handleSyncClick);
+  const signin  = qs("#signinBtn");
+  const signout = qs("#signoutBtn");
+  const syncBtn = qs("#syncBtn");
+  if (signin)  signin.addEventListener("click", handleAuthClick);
+  if (signout) signout.addEventListener("click", handleSignoutClick);
+  if (syncBtn) syncBtn.addEventListener("click", handleSyncClick);
+  setCloudButtons();
 }
 
 function cloudToast(msg, ok=true){
   const el = qs("#cloudToast");
+  if (!el) return;
   el.textContent = msg;
   el.style.color = ok ? "#0a2a45" : "#b00020";
   el.classList.add("show");
@@ -372,14 +359,17 @@ function cloudToast(msg, ok=true){
 }
 
 function setCloudButtons(){
-  qs("#signinBtn").disabled = !(gapiInited && gisInited) || authed;
-  qs("#signoutBtn").disabled = !authed;
-  qs("#syncBtn").disabled = !authed;
+  const signin  = qs("#signinBtn");
+  const signout = qs("#signoutBtn");
+  const syncBtn = qs("#syncBtn");
+  if (signin)  signin.disabled  = !(gapiInited && gisInited) || authed;
+  if (signout) signout.disabled = !authed;
+  if (syncBtn) syncBtn.disabled = !authed;
 }
 
-// gapi & GIS を読み込み
+// gapi & GIS を読み込み（scriptタグは index.html で読み込むこと）
 function loadGapiAndGis(){
-  // gapi.js は script タグで読み込み済み。onload が無いのでポーリングで待機
+  // gapi.js の準備待ち
   const waitGapi = new Promise((res)=>{
     const t = setInterval(()=>{
       if (window.gapi && window.gapi.load) {
@@ -391,15 +381,13 @@ function loadGapiAndGis(){
           });
           gapiInited = true;
           setCloudButtons();
-          // gapi準備できたら一度ロード試行（未認可でもOK）
-          // サインイン後に改めて同期する
+          res();
         });
-        res();
       }
     }, 100);
   });
 
-  // GIS（Google Identity Services）も待機
+  // Google Identity Services の準備待ち
   const waitGIS = new Promise((res)=>{
     const t = setInterval(()=>{
       if (window.google && window.google.accounts && window.google.accounts.oauth2) {
@@ -412,7 +400,7 @@ function loadGapiAndGis(){
               authed = true;
               setCloudButtons();
               cloudToast("サインインしました");
-              // 初回サインイン後にクラウド→ローカルへ取り込み
+              // 初回サインイン時にクラウド→ローカル取り込み
               loadAllFromSheet(true).catch(err=>{
                 cloudToast("Sheets読込に失敗: " + err.message, false);
               });
@@ -433,12 +421,13 @@ function handleAuthClick(){
   if (!tokenClient) return;
   tokenClient.requestAccessToken({ prompt: "consent" });
 }
+
 function handleSignoutClick(){
-  // アクセストークンを取り消し（ユーザー体験簡便化のためページ更新で十分なことが多い）
-  authed = false;
+  authed = false; // 単純化：ページ更新で完全リセットでもOK
   setCloudButtons();
   cloudToast("サインアウトしました");
 }
+
 async function handleSyncClick(){
   try {
     await pushAllToSheet();
@@ -457,7 +446,6 @@ async function appendRecordToSheet(rec){
     rec.eurRate ?? "", rec.eurMarkup ?? "",
     rec.detail ?? "", rec.createdAt
   ]];
-  // ヘッダーが無い場合に備えてA1起点でINSERT_ROWS
   return gapi.client.sheets.spreadsheets.values.append({
     spreadsheetId: GSHEETS.SPREADSHEET_ID,
     range: "Sheet1!A1",
@@ -467,7 +455,7 @@ async function appendRecordToSheet(rec){
   });
 }
 
-// シート全体を読み込んで state.records を置き換え（merge=false）
+// シート全体を読み込んで state.records を置き換え（replaceLocal=trueで置換）
 async function loadAllFromSheet(replaceLocal=false){
   ensureAuthed();
   const res = await gapi.client.sheets.spreadsheets.values.get({
@@ -477,12 +465,11 @@ async function loadAllFromSheet(replaceLocal=false){
 
   const rows = res.result.values || [];
   if (!rows.length) {
-    // ヘッダーを作成
     await ensureHeaderRow();
     return;
   }
 
-  // 1行目がヘッダーかどうか判定（id っぽいか）
+  // 1行目がヘッダーかどうか判定
   let start = 0;
   if (rows[0] && rows[0][0] === "id") start = 1;
 
@@ -492,14 +479,13 @@ async function loadAllFromSheet(replaceLocal=false){
     type: r[2],
     amountJPY: Number(r[3]||0),
     amountEUR: r[4] ? Number(r[4]) : null,
-    eurRate: r[5] ? Number(r[5]) : null,
-    eurMarkup: r[6] ? Number(r[6]) : null,
-    detail: r[7] || "",
-    createdAt: r[8] ? Number(r[8]) : Date.now()
+    eurRate:  r[5] ? Number(r[5]) : null,
+    eurMarkup:r[6] ? Number(r[6]) : null,
+    detail:   r[7] || "",
+    createdAt:r[8] ? Number(r[8]) : Date.now()
   })).filter(x => x.id);
 
   if (recs.length){
-    // 置き換え or マージ（今回は置き換え推奨）
     if (replaceLocal) {
       state.records = recs.sort((a,b)=> b.createdAt - a.createdAt);
       saveRecords(state.records);
@@ -510,7 +496,7 @@ async function loadAllFromSheet(replaceLocal=false){
   }
 }
 
-// ローカル全件をシートに反映（ヘッダー作成→本体を一括書き込み）
+// ローカル全件をシートに反映（ヘッダー作成→本体一括書込）
 async function pushAllToSheet(){
   ensureAuthed();
   await clearSheet();
