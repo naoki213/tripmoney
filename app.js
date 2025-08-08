@@ -7,10 +7,15 @@ const CATEGORIES = [
   "宿泊費","交通費","食費","観光代","土産代","その他"
 ];
 
-// 円グラフ用の配色（淡い青系を中心に）
 const COLORS = [
-  "#8ec9ff","#6bb6ff","#49a3ff","#2f92fb","#89a7ff","#a8ccff"
+  "#ff4d4d", // 赤
+  "#4d79ff", // 青
+  "#4dff4d", // 緑
+  "#ffb84d", // オレンジ
+  "#b84dff", // 紫
+  "#ffd24d"  // 黄
 ];
+
 
 // ====== ユーティリティ ======
 const qs = (s, el=document) => el.querySelector(s);
