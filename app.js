@@ -117,7 +117,7 @@ function initRate() {
   const eff = qs("#effectiveRate");
   const updateEff = () => {
     const base = parseFloat(eurRateInput.value || "0");
-    const effVal = base * 1.05;
+    const effVal = base * 1.022;
     eff.textContent = isFinite(effVal) ? effVal.toFixed(2) : "0";
     // EUR入力→JPY自動変換
     const eur = parseFloat(qs("#amountEUR").value || "0");
@@ -164,7 +164,7 @@ function onSave() {
 
   let finalJPY = amountJPY;
   if (!finalJPY && amountEUR) {
-    const effVal = eurRate * 1.05;
+    const effVal = eurRate * 1.022;
     finalJPY = Math.round(amountEUR * effVal);
   }
 
@@ -175,7 +175,7 @@ function onSave() {
     amountJPY: finalJPY,
     amountEUR: amountEUR || null,
     eurRate: eurRate || null,
-    eurMarkup: 1.05,
+    eurMarkup: 1.022,
     detail,
     createdAt: Date.now()
   };
