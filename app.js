@@ -16,6 +16,10 @@ const COLORS = [
   "#ffd24d"  // 黄
 ];
 
+// ---- 自動同期設定 ----
+const AUTO_SYNC = true;
+const AUTO_SYNC_INTERVAL_MS = 60 * 1000; // 60秒ごと
+
 // ====== ユーティリティ ======
 const qs  = (s, el=document) => el.querySelector(s);
 const qsa = (s, el=document) => [...el.querySelectorAll(s)];
@@ -28,7 +32,6 @@ function loadRecords() {
 function saveRecords(list) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
 }
-
 function loadDeletedIds(){
   try { return JSON.parse(localStorage.getItem(DELETED_KEY) || "[]"); }
   catch { return []; }
@@ -60,6 +63,7 @@ let state = {
   records: loadRecords(),
   chart: null,
 };
+let isUserTyping = false; // 入力中フラグ
 
 // ====== 初期化 ======
 document.addEventListener("DOMContentLoaded", () => {
@@ -118,7 +122,6 @@ function highlightType(cat) {
     b.classList.toggle("active", b.textContent === cat);
   });
 }
-
 function initRate() {
   const eurRateInput = qs("#eurRateInput");
   const eff = qs("#effectiveRate");
@@ -138,11 +141,16 @@ function attachEvents() {
   qs("#amountEUR").addEventListener("input", () => {
     const eur = parseFloat(qs("#amountEUR").value || "0");
     const effVal = parseFloat(qs("#effectiveRate").textContent || "0");
-    if (eur > 0 && effVal > 0) {
-      qs("#amountJPY").value = Math.round(eur * effVal);
-    }
+    if (eur > 0 && effVal > 0) qs("#amountJPY").value = Math.round(eur * effVal);
   });
   qs("#saveBtn").addEventListener("click", onSave);
+
+  // 入力中フラグ（入力欄にフォーカスがある間は自動同期を止める）
+  ["#amountJPY", "#amountEUR", "#detail"].forEach(sel => {
+    const el = qs(sel);
+    el.addEventListener("focus", () => { isUserTyping = true; });
+    el.addEventListener("blur",  () => { isUserTyping = false; });
+  });
 }
 
 function toast(msg, ok=true){
@@ -153,7 +161,7 @@ function toast(msg, ok=true){
   setTimeout(()=> el.classList.remove("show"), 1800);
 }
 
-// 保存
+// ====== 保存 ======
 function onSave() {
   const date = state.selectedDate;
   const type = state.selectedType;
@@ -186,15 +194,18 @@ function onSave() {
   state.records.unshift(rec);
   saveRecords(state.records);
 
+  // サインイン済みならSheetsにも追加
   if (authed) {
     appendRecordToSheet(rec)
       .then(()=> cloudToast("Sheetsに保存しました"))
       .catch(err=> cloudToast("Sheets保存失敗: " + err.message, false));
   }
 
+  // 入力クリア（種類と日付は保持）
   qs("#amountJPY").value = "";
   qs("#amountEUR").value = "";
   qs("#detail").value = "";
+
   toast("保存しました");
   syncUI();
 }
@@ -240,13 +251,7 @@ function renderList() {
       if (!confirm("この記録を削除しますか？")) return;
 
       try {
-        // サインイン済みなら、上書き前にクラウド最新を取り込み（他端末追加分を温存）
-        if (authed) {
-          if (tokenClient) { try { tokenClient.requestAccessToken({ prompt: '' }); } catch {} }
-          await loadAllFromSheet(true);
-        }
-
-        // ローカルから1件削除 + 削除IDをキューに追加
+        // 1) ローカルから1件削除 & 削除IDキューに積む
         const deleted = loadDeletedIds();
         deleted.push(rec.id);
         saveDeletedIds([...new Set(deleted)]);
@@ -255,8 +260,9 @@ function renderList() {
         saveRecords(state.records);
         syncUI();
 
-        // 双方向同期でクラウドにも反映
+        // 2) サインイン済みなら双方向同期でクラウドにも反映
         if (authed) {
+          if (tokenClient) { try { tokenClient.requestAccessToken({ prompt: '' }); } catch {} }
           await twoWaySync();
           cloudToast("Sheetsからも削除しました");
         }
@@ -335,7 +341,35 @@ let gisInited = false;
 let tokenClient = null;
 let authed = false;
 let tokenRefreshTimer = null;
+let autoSyncTimer = null;
 
+function cloudToast(msg, ok=true){
+  const el = qs("#cloudToast");
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color = ok ? "#0a2a45" : "#b00020";
+  el.classList.add("show");
+  setTimeout(()=> el.classList.remove("show"), 2200);
+}
+function setCloudButtons(){
+  const signin  = qs("#signinBtn");
+  const signout = qs("#signoutBtn");
+  const syncBtn = qs("#syncBtn");
+  if (signin)  signin.disabled  = !(gapiInited && gisInited) || authed;
+  if (signout) signout.disabled = !authed;
+  if (syncBtn) syncBtn.disabled = !authed;
+}
+function initCloudButtons(){
+  const signin  = qs("#signinBtn");
+  const signout = qs("#signoutBtn");
+  const syncBtn = qs("#syncBtn");
+  if (signin)  signin.addEventListener("click", handleAuthClick);
+  if (signout) signout.addEventListener("click", handleSignoutClick);
+  if (syncBtn) syncBtn.addEventListener("click", handleSyncClick);
+  setCloudButtons();
+}
+
+// トークン自動延長
 function startTokenAutoRefresh(){
   if (tokenRefreshTimer) clearInterval(tokenRefreshTimer);
   tokenRefreshTimer = setInterval(() => {
@@ -348,36 +382,48 @@ function trySilentSignIn() {
   try { tokenClient.requestAccessToken({ prompt: '' }); } catch {}
 }
 
-function initCloudButtons(){
-  qs("#signinBtn").addEventListener("click", handleAuthClick);
-  qs("#signoutBtn").addEventListener("click", handleSignoutClick);
-  qs("#syncBtn").addEventListener("click", handleSyncClick);
+// 自動同期
+function startAutoSync(){
+  if (!AUTO_SYNC) return;
+  stopAutoSync();
+  autoSyncTimer = setInterval(async () => {
+    if (!authed) return;
+    if (isUserTyping) return; // 入力中は同期しない
+    if (document.visibilityState !== 'visible') return;
+    if (!navigator.onLine) return;
+    try {
+      if (tokenClient) { try { tokenClient.requestAccessToken({ prompt: '' }); } catch {} }
+      await twoWaySync();
+      cloudToast("自動同期しました");
+    } catch (e) {
+      // 静かにスキップ
+      console.debug("auto sync failed:", e?.message || e);
+    }
+  }, AUTO_SYNC_INTERVAL_MS);
 }
-function cloudToast(msg, ok=true){
-  const el = qs("#cloudToast");
-  el.textContent = msg;
-  el.style.color = ok ? "#0a2a45" : "#b00020";
-  el.classList.add("show");
-  setTimeout(()=> el.classList.remove("show"), 2200);
-}
-function setCloudButtons(){
-  qs("#signinBtn").disabled = !(gapiInited && gisInited) || authed;
-  qs("#signoutBtn").disabled = !authed;
-  qs("#syncBtn").disabled = !authed;
+function stopAutoSync(){
+  if (autoSyncTimer) clearInterval(autoSyncTimer);
+  autoSyncTimer = null;
 }
 
+// SDK読み込み
 function loadGapiAndGis(){
+  // gapi.js の準備待ち
   const waitGapi = new Promise((res)=>{
     const t = setInterval(()=>{
       if (window.gapi && window.gapi.load) {
         clearInterval(t);
         gapi.load("client", async ()=>{
           await gapi.client.init({ apiKey: GSHEETS.API_KEY, discoveryDocs: [GSHEETS.DISCOVERY_DOC] });
-          gapiInited = true; setCloudButtons(); res();
+          gapiInited = true;
+          setCloudButtons();
+          res();
         });
       }
     }, 100);
   });
+
+  // GIS の準備待ち
   const waitGIS = new Promise((res)=>{
     const t = setInterval(()=>{
       if (window.google && window.google.accounts && window.google.accounts.oauth2) {
@@ -391,11 +437,16 @@ function loadGapiAndGis(){
               setCloudButtons();
               cloudToast("サインインしました");
               startTokenAutoRefresh();
+              // 起動直後：取り込み→双方向同期→自動同期開始
               loadAllFromSheet(true).catch(err=> cloudToast("Sheets読込失敗: " + err.message, false));
+              twoWaySync().catch(()=>{});
+              startAutoSync();
             }
           },
         });
-        gisInited = true; setCloudButtons(); res();
+        gisInited = true;
+        setCloudButtons();
+        res();
       }
     }, 100);
   });
@@ -403,16 +454,33 @@ function loadGapiAndGis(){
   Promise.all([waitGapi, waitGIS]).then(()=>{
     setCloudButtons();
     trySilentSignIn(); // 起動時に静かに再認可
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') trySilentSignIn();
+    // 画面復帰・オンライン復帰でも同期
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible' && authed && !isUserTyping) {
+        try {
+          if (tokenClient) { try { tokenClient.requestAccessToken({ prompt: '' }); } catch {} }
+          await twoWaySync();
+          cloudToast("再表示で同期しました");
+        } catch {}
+      }
+    });
+    window.addEventListener('online', async () => {
+      if (authed && !isUserTyping) {
+        try { await twoWaySync(); cloudToast("オンライン復帰で同期しました"); } catch {}
+      }
     });
   });
 }
 
 function handleAuthClick(){ if (tokenClient) tokenClient.requestAccessToken({ prompt: "consent" }); }
-function handleSignoutClick(){ authed = false; setCloudButtons(); cloudToast("サインアウトしました"); }
+function handleSignoutClick(){
+  authed = false;
+  setCloudButtons();
+  stopAutoSync();
+  cloudToast("サインアウトしました");
+}
 
-// 今すぐ同期：双方向同期（マージ）
+// 手動「今すぐ同期」→ 双方向同期
 async function handleSyncClick(){
   try {
     if (!authed) throw new Error("サインインしていません");
@@ -432,7 +500,7 @@ async function twoWaySync() {
   // 1) Sheets全件取得（ローカル非破壊）
   const sheetRecords = await fetchAllFromSheet();
 
-  // 2) 削除キュー適用（この端末で削除済IDは最優先で削除）
+  // 2) 削除キュー適用（この端末で削除済IDは最優先で除去）
   const deletedIds = new Set(loadDeletedIds());
   const sheetAfterDelete = sheetRecords.filter(r => !deletedIds.has(r.id));
 
