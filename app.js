@@ -1,9 +1,13 @@
 // ====== 設定 ======
 const TRIP_YEAR = 2025;
 const BUDGET_JPY = 800000;
-const STORAGE_KEY = "trip-budget-records-v1";
-const DELETED_KEY = "trip-budget-deleted-ids"; // 削除IDキュー（双方向同期用）
 
+// ローカル保存キー
+const STORAGE_KEY = "trip-budget-records-v1";
+// 削除キュー（自動/手動同期時に最優先で反映）
+const DELETED_KEY = "trip-budget-deleted-ids";
+
+// 種類（固定）
 const CATEGORIES = ["宿泊費","交通費","食費","観光代","土産代","その他"];
 
 // 円グラフ配色（視認性重視）
@@ -18,13 +22,14 @@ const COLORS = [
 
 // ---- 自動同期設定 ----
 const AUTO_SYNC = true;
-const AUTO_SYNC_INTERVAL_MS = 60 * 1000; // 60秒ごと
+const AUTO_SYNC_INTERVAL_MS = 60 * 1000; // 60秒ごと（必要なら 120000 に）
 
 // ====== ユーティリティ ======
 const qs  = (s, el=document) => el.querySelector(s);
 const qsa = (s, el=document) => [...el.querySelectorAll(s)];
 const fmtJPY = (n) => (Math.round(n)||0).toLocaleString("ja-JP");
 
+// ローカル I/O
 function loadRecords() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
   catch { return []; }
@@ -63,7 +68,7 @@ let state = {
   records: loadRecords(),
   chart: null,
 };
-let isUserTyping = false; // 入力中フラグ
+let isUserTyping = false; // 入力中は自動同期を止める
 
 // ====== 初期化 ======
 document.addEventListener("DOMContentLoaded", () => {
@@ -122,6 +127,7 @@ function highlightType(cat) {
     b.classList.toggle("active", b.textContent === cat);
   });
 }
+
 function initRate() {
   const eurRateInput = qs("#eurRateInput");
   const eff = qs("#effectiveRate");
@@ -251,16 +257,17 @@ function renderList() {
       if (!confirm("この記録を削除しますか？")) return;
 
       try {
-        // 1) ローカルから1件削除 & 削除IDキューに積む
+        // ① 削除IDをキューへ（復活防止の肝）
         const deleted = loadDeletedIds();
         deleted.push(rec.id);
         saveDeletedIds([...new Set(deleted)]);
 
+        // ② ローカルから削除
         state.records = state.records.filter(r => r.id !== rec.id);
         saveRecords(state.records);
         syncUI();
 
-        // 2) サインイン済みなら双方向同期でクラウドにも反映
+        // ③ サインイン済みなら双方向同期でクラウドにも反映
         if (authed) {
           if (tokenClient) { try { tokenClient.requestAccessToken({ prompt: '' }); } catch {} }
           await twoWaySync();
@@ -343,6 +350,7 @@ let authed = false;
 let tokenRefreshTimer = null;
 let autoSyncTimer = null;
 
+// トースト（クラウド用）
 function cloudToast(msg, ok=true){
   const el = qs("#cloudToast");
   if (!el) return;
@@ -396,7 +404,6 @@ function startAutoSync(){
       await twoWaySync();
       cloudToast("自動同期しました");
     } catch (e) {
-      // 静かにスキップ
       console.debug("auto sync failed:", e?.message || e);
     }
   }, AUTO_SYNC_INTERVAL_MS);
@@ -519,7 +526,7 @@ async function twoWaySync() {
   state.records = merged;
   saveRecords(state.records);
   await pushAllToSheet();
-  saveDeletedIds([]);
+  saveDeletedIds([]); // ← ここで空にする（復活防止）
   syncUI();
 }
 
@@ -627,3 +634,4 @@ async function clearSheet(){
 }
 
 function ensureAuthed(){ if (!authed) throw new Error("サインインしていません"); }
+
