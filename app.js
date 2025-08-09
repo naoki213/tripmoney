@@ -2,10 +2,9 @@
 const TRIP_YEAR = 2025;
 const BUDGET_JPY = 800000;
 const STORAGE_KEY = "trip-budget-records-v1";
+const DELETED_KEY = "trip-budget-deleted-ids"; // 削除IDキュー（双方向同期用）
 
-const CATEGORIES = [
-  "宿泊費","交通費","食費","観光代","土産代","その他"
-];
+const CATEGORIES = ["宿泊費","交通費","食費","観光代","土産代","その他"];
 
 // 円グラフ配色（視認性重視）
 const COLORS = [
@@ -22,10 +21,26 @@ const qs  = (s, el=document) => el.querySelector(s);
 const qsa = (s, el=document) => [...el.querySelectorAll(s)];
 const fmtJPY = (n) => (Math.round(n)||0).toLocaleString("ja-JP");
 
-// 9/12〜9/22の配列を作る
+function loadRecords() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
+  catch { return []; }
+}
+function saveRecords(list) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+}
+
+function loadDeletedIds(){
+  try { return JSON.parse(localStorage.getItem(DELETED_KEY) || "[]"); }
+  catch { return []; }
+}
+function saveDeletedIds(arr){
+  localStorage.setItem(DELETED_KEY, JSON.stringify(arr));
+}
+
+// 9/12〜9/22の配列
 function buildFixedDates() {
   const dates = [];
-  const start = new Date(TRIP_YEAR, 8, 12); // 月は0始まり: 8=9月
+  const start = new Date(TRIP_YEAR, 8, 12); // 8 = 9月
   const end   = new Date(TRIP_YEAR, 8, 22);
   for (let d = new Date(start); d <= end; d.setDate(d.getDate()+1)) {
     const y = d.getFullYear();
@@ -38,15 +53,6 @@ function buildFixedDates() {
   return dates;
 }
 
-// ストレージ
-function loadRecords() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); }
-  catch { return []; }
-}
-function saveRecords(list) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-}
-
 // ====== 状態 ======
 let state = {
   selectedDate: null,
@@ -55,14 +61,14 @@ let state = {
   chart: null,
 };
 
-// ====== 初期化（※1回だけ） ======
+// ====== 初期化 ======
 document.addEventListener("DOMContentLoaded", () => {
   renderDateTabs();
   renderTypeButtons();
   initRate();
   attachEvents();
-  initCloudButtons();   // Google Sheets 連携ボタン
-  loadGapiAndGis();     // Google SDK ロード
+  initCloudButtons(); // クラウドボタン
+  loadGapiAndGis();   // Google SDK
   syncUI();
 });
 
@@ -82,11 +88,10 @@ function renderDateTabs() {
       highlightDateTab(d.iso);
     });
     wrap.appendChild(btn);
-    if (i === 0) state.selectedDate = d.iso; // 初期選択は最初の日
+    if (i === 0) state.selectedDate = d.iso;
   });
   highlightDateTab(state.selectedDate);
 }
-
 function highlightDateTab(iso) {
   qsa("#dateTabs .pill").forEach(b => {
     b.classList.toggle("active", b.getAttribute("data-iso") === iso);
@@ -108,7 +113,6 @@ function renderTypeButtons() {
     wrap.appendChild(btn);
   });
 }
-
 function highlightType(cat) {
   qsa("#typeButtons .pill").forEach(b => {
     b.classList.toggle("active", b.textContent === cat);
@@ -120,19 +124,16 @@ function initRate() {
   const eff = qs("#effectiveRate");
   const updateEff = () => {
     const base = parseFloat(eurRateInput.value || "0");
-    const effVal = base * 1.022; // ← 指定倍率
+    const effVal = base * 1.022; // 指定倍率
     eff.textContent = isFinite(effVal) ? effVal.toFixed(2) : "0";
-    // EUR入力→JPY自動変換
     const eur = parseFloat(qs("#amountEUR").value || "0");
-    if (eur > 0) {
-      qs("#amountJPY").value = Math.round(eur * effVal);
-    }
+    if (eur > 0) qs("#amountJPY").value = Math.round(eur * effVal);
   };
   eurRateInput.addEventListener("input", updateEff);
   updateEff();
 }
 
-// ====== イベント ======
+// ====== 入出力 ======
 function attachEvents() {
   qs("#amountEUR").addEventListener("input", () => {
     const eur = parseFloat(qs("#amountEUR").value || "0");
@@ -141,7 +142,6 @@ function attachEvents() {
       qs("#amountJPY").value = Math.round(eur * effVal);
     }
   });
-
   qs("#saveBtn").addEventListener("click", onSave);
 }
 
@@ -153,29 +153,28 @@ function toast(msg, ok=true){
   setTimeout(()=> el.classList.remove("show"), 1800);
 }
 
-// ====== 保存処理（※この関数は1つだけ） ======
+// 保存
 function onSave() {
-  const date      = state.selectedDate;
-  const type      = state.selectedType;
+  const date = state.selectedDate;
+  const type = state.selectedType;
   const amountJPY = Math.round(parseFloat(qs("#amountJPY").value || "0"));
   const amountEUR = parseFloat(qs("#amountEUR").value || "0");
   const eurRate   = parseFloat(qs("#eurRateInput").value || "0");
   const detail    = qs("#detail").value.trim();
 
-  if (!date) { toast("日付を選択してください", false); return; }
-  if (!type) { toast("種類を選択してください", false); return; }
-  if (!amountJPY && !amountEUR) { toast("円またはユーロの金額を入力してください", false); return; }
+  if (!date)  return toast("日付を選択してください", false);
+  if (!type)  return toast("種類を選択してください", false);
+  if (!amountJPY && !amountEUR) return toast("円またはユーロの金額を入力してください", false);
 
   let finalJPY = amountJPY;
   if (!finalJPY && amountEUR) {
-    const effVal = eurRate * 1.022; // ← 指定倍率
+    const effVal = eurRate * 1.022;
     finalJPY = Math.round(amountEUR * effVal);
   }
 
   const rec = {
     id: crypto.randomUUID(),
-    date,
-    type,
+    date, type,
     amountJPY: finalJPY,
     amountEUR: amountEUR || null,
     eurRate: eurRate || null,
@@ -184,29 +183,23 @@ function onSave() {
     createdAt: Date.now()
   };
 
-  // 先にローカル保存
   state.records.unshift(rec);
   saveRecords(state.records);
 
-  // サインイン済みなら Sheets にも自動保存
   if (authed) {
-    appendRecordToSheet(rec).then(()=>{
-      cloudToast("Sheetsに保存しました");
-    }).catch(err=>{
-      cloudToast("Sheets保存に失敗: " + err.message, false);
-    });
+    appendRecordToSheet(rec)
+      .then(()=> cloudToast("Sheetsに保存しました"))
+      .catch(err=> cloudToast("Sheets保存失敗: " + err.message, false));
   }
 
-  // 入力クリア（種類と日付は保持）
   qs("#amountJPY").value = "";
   qs("#amountEUR").value = "";
   qs("#detail").value = "";
-
   toast("保存しました");
   syncUI();
 }
 
-// ====== 表示同期 ======
+// ====== 表示 ======
 function syncUI() {
   renderList();
   renderStatsAndChart();
@@ -247,25 +240,28 @@ function renderList() {
       if (!confirm("この記録を削除しますか？")) return;
 
       try {
-        // 1) サインイン済みなら、上書き前にクラウド最新を取り込む（他端末追加分を温存）
+        // サインイン済みなら、上書き前にクラウド最新を取り込み（他端末追加分を温存）
         if (authed) {
-          // トークン延命ヘルパーを入れている人は次行を有効化
-          // await ensureSignedIn();
+          if (tokenClient) { try { tokenClient.requestAccessToken({ prompt: '' }); } catch {} }
           await loadAllFromSheet(true);
         }
 
-        // 2) ローカルから1件削除
+        // ローカルから1件削除 + 削除IDをキューに追加
+        const deleted = loadDeletedIds();
+        deleted.push(rec.id);
+        saveDeletedIds([...new Set(deleted)]);
+
         state.records = state.records.filter(r => r.id !== rec.id);
         saveRecords(state.records);
         syncUI();
 
-        // 3) サインイン済みなら、ローカル全件をSheetsへ上書き（＝削除反映）
+        // 双方向同期でクラウドにも反映
         if (authed) {
-          await pushAllToSheet();
+          await twoWaySync();
           cloudToast("Sheetsからも削除しました");
         }
       } catch (err) {
-        cloudToast("削除同期に失敗: " + (err.message || err), false);
+        cloudToast("削除同期失敗: " + (err.message || err), false);
         console.error(err);
       }
     });
@@ -284,7 +280,6 @@ function toDisplayDate(iso){
 }
 
 function renderStatsAndChart() {
-  // 集計
   const sumByCat = Object.fromEntries(CATEGORIES.map(c => [c, 0]));
   let total = 0;
   state.records.forEach(r => {
@@ -296,7 +291,6 @@ function renderStatsAndChart() {
   qs("#spentAmount").textContent = fmtJPY(total);
   qs("#remainAmount").textContent = fmtJPY(remain);
 
-  // グラフ
   const data = CATEGORIES.map(c => sumByCat[c]);
   const ctx = qs("#pieChart").getContext("2d");
 
@@ -306,34 +300,18 @@ function renderStatsAndChart() {
   } else {
     state.chart = new Chart(ctx, {
       type: "doughnut",
-      data: {
-        labels: CATEGORIES,
-        datasets: [{
-          data,
-          backgroundColor: COLORS,
-          borderWidth: 0
-        }]
-      },
+      data: { labels: CATEGORIES, datasets: [{ data, backgroundColor: COLORS, borderWidth: 0 }] },
       options: {
         responsive: true,
         plugins: {
           legend: { display: false },
-          tooltip: {
-            callbacks: {
-              label: (item) => {
-                const label = item.label || "";
-                const val = item.raw || 0;
-                return `${label}: ${fmtJPY(val)} 円`;
-              }
-            }
-          }
+          tooltip: { callbacks: { label: (item) => `${item.label}: ${fmtJPY(item.raw)} 円` } }
         },
         cutout: "62%"
       }
     });
   }
 
-  // 凡例
   const legend = qs("#chartLegend");
   legend.innerHTML = "";
   CATEGORIES.forEach((c, i) => {
@@ -344,7 +322,7 @@ function renderStatsAndChart() {
   });
 }
 
-// ====== Google Sheets 連携設定 ======
+// ====== Google Sheets 連携 ======
 const GSHEETS = {
   API_KEY: "AIzaSyCl16O5UWCsDdNB3o2M8m4osCj5TlatXX0",
   CLIENT_ID: "217890720524-tgpuqqv60m8pv1t3evn17a15d52jsrki.apps.googleusercontent.com",
@@ -355,58 +333,51 @@ const GSHEETS = {
 let gapiInited = false;
 let gisInited = false;
 let tokenClient = null;
-let authed = false; // サインイン状態
+let authed = false;
+let tokenRefreshTimer = null;
 
-// ====== クラウド（Sheets）関連 ======
-function initCloudButtons(){
-  const signin  = qs("#signinBtn");
-  const signout = qs("#signoutBtn");
-  const syncBtn = qs("#syncBtn");
-  if (signin)  signin.addEventListener("click", handleAuthClick);
-  if (signout) signout.addEventListener("click", handleSignoutClick);
-  if (syncBtn) syncBtn.addEventListener("click", handleSyncClick);
-  setCloudButtons();
+function startTokenAutoRefresh(){
+  if (tokenRefreshTimer) clearInterval(tokenRefreshTimer);
+  tokenRefreshTimer = setInterval(() => {
+    if (!tokenClient || !authed) return;
+    try { tokenClient.requestAccessToken({ prompt: '' }); } catch {}
+  }, 45 * 60 * 1000);
+}
+function trySilentSignIn() {
+  if (!tokenClient || authed) return;
+  try { tokenClient.requestAccessToken({ prompt: '' }); } catch {}
 }
 
+function initCloudButtons(){
+  qs("#signinBtn").addEventListener("click", handleAuthClick);
+  qs("#signoutBtn").addEventListener("click", handleSignoutClick);
+  qs("#syncBtn").addEventListener("click", handleSyncClick);
+}
 function cloudToast(msg, ok=true){
   const el = qs("#cloudToast");
-  if (!el) return;
   el.textContent = msg;
   el.style.color = ok ? "#0a2a45" : "#b00020";
   el.classList.add("show");
   setTimeout(()=> el.classList.remove("show"), 2200);
 }
-
 function setCloudButtons(){
-  const signin  = qs("#signinBtn");
-  const signout = qs("#signoutBtn");
-  const syncBtn = qs("#syncBtn");
-  if (signin)  signin.disabled  = !(gapiInited && gisInited) || authed;
-  if (signout) signout.disabled = !authed;
-  if (syncBtn) syncBtn.disabled = !authed;
+  qs("#signinBtn").disabled = !(gapiInited && gisInited) || authed;
+  qs("#signoutBtn").disabled = !authed;
+  qs("#syncBtn").disabled = !authed;
 }
 
-// gapi & GIS を読み込み（scriptタグは index.html で読み込むこと）
 function loadGapiAndGis(){
-  // gapi.js の準備待ち
   const waitGapi = new Promise((res)=>{
     const t = setInterval(()=>{
       if (window.gapi && window.gapi.load) {
         clearInterval(t);
         gapi.load("client", async ()=>{
-          await gapi.client.init({
-            apiKey: GSHEETS.API_KEY,
-            discoveryDocs: [GSHEETS.DISCOVERY_DOC],
-          });
-          gapiInited = true;
-          setCloudButtons();
-          res();
+          await gapi.client.init({ apiKey: GSHEETS.API_KEY, discoveryDocs: [GSHEETS.DISCOVERY_DOC] });
+          gapiInited = true; setCloudButtons(); res();
         });
       }
     }, 100);
   });
-
-  // Google Identity Services の準備待ち
   const waitGIS = new Promise((res)=>{
     const t = setInterval(()=>{
       if (window.google && window.google.accounts && window.google.accounts.oauth2) {
@@ -419,52 +390,102 @@ function loadGapiAndGis(){
               authed = true;
               setCloudButtons();
               cloudToast("サインインしました");
-              // 初回サインイン時にクラウド→ローカル取り込み
-              loadAllFromSheet(true).catch(err=>{
-                cloudToast("Sheets読込に失敗: " + err.message, false);
-              });
+              startTokenAutoRefresh();
+              loadAllFromSheet(true).catch(err=> cloudToast("Sheets読込失敗: " + err.message, false));
             }
           },
         });
-        gisInited = true;
-        setCloudButtons();
-        res();
+        gisInited = true; setCloudButtons(); res();
       }
     }, 100);
   });
 
-  Promise.all([waitGapi, waitGIS]).then(()=> setCloudButtons());
+  Promise.all([waitGapi, waitGIS]).then(()=>{
+    setCloudButtons();
+    trySilentSignIn(); // 起動時に静かに再認可
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') trySilentSignIn();
+    });
+  });
 }
 
-function handleAuthClick(){
-  if (!tokenClient) return;
-  tokenClient.requestAccessToken({ prompt: "consent" });
-}
+function handleAuthClick(){ if (tokenClient) tokenClient.requestAccessToken({ prompt: "consent" }); }
+function handleSignoutClick(){ authed = false; setCloudButtons(); cloudToast("サインアウトしました"); }
 
-function handleSignoutClick(){
-  authed = false; // 単純化：ページ更新で完全リセットでもOK
-  setCloudButtons();
-  cloudToast("サインアウトしました");
-}
-
+// 今すぐ同期：双方向同期（マージ）
 async function handleSyncClick(){
   try {
-    await pushAllToSheet();
-    cloudToast("Sheetsに同期しました");
+    if (!authed) throw new Error("サインインしていません");
+    if (tokenClient) { try { tokenClient.requestAccessToken({ prompt: '' }); } catch {} }
+    await twoWaySync();
+    cloudToast("Sheetsと双方向同期しました");
   } catch(e){
-    cloudToast("同期失敗: " + (e.message || e.statusText || e), false);
+    cloudToast("同期失敗: " + (e.message || e), false);
     console.error(e);
   }
 }
 
-// 1レコードを末尾に追加
+// ====== 双方向同期ロジック ======
+async function twoWaySync() {
+  ensureAuthed();
+
+  // 1) Sheets全件取得（ローカル非破壊）
+  const sheetRecords = await fetchAllFromSheet();
+
+  // 2) 削除キュー適用（この端末で削除済IDは最優先で削除）
+  const deletedIds = new Set(loadDeletedIds());
+  const sheetAfterDelete = sheetRecords.filter(r => !deletedIds.has(r.id));
+
+  // 3) ローカルとマージ（idの和集合）／同一idは createdAt 新しい方
+  const mergedMap = new Map();
+  sheetAfterDelete.forEach(r => mergedMap.set(r.id, r));
+  state.records.forEach(r => {
+    const ex = mergedMap.get(r.id);
+    if (!ex || (r.createdAt || 0) > (ex.createdAt || 0)) mergedMap.set(r.id, r);
+  });
+
+  // 4) マージ結果を配列化・降順
+  const merged = Array.from(mergedMap.values()).sort((a,b)=> (b.createdAt||0) - (a.createdAt||0));
+
+  // 5) Sheetsをマージ結果で上書き → ローカル更新 → 削除キュークリア
+  state.records = merged;
+  saveRecords(state.records);
+  await pushAllToSheet();
+  saveDeletedIds([]);
+  syncUI();
+}
+
+// ローカルを触らずSheets全件を配列で取得
+async function fetchAllFromSheet() {
+  ensureAuthed();
+  const res = await gapi.client.sheets.spreadsheets.values.get({
+    spreadsheetId: GSHEETS.SPREADSHEET_ID,
+    range: "Sheet1!A1:Z100000"
+  });
+  const rows = res.result.values || [];
+  if (!rows.length) return [];
+  let start = 0;
+  if (rows[0][0] === "id") start = 1;
+
+  return rows.slice(start).map(r => ({
+    id: r[0],
+    date: r[1],
+    type: r[2],
+    amountJPY: Number(r[3]||0),
+    amountEUR: r[4] ? Number(r[4]) : null,
+    eurRate:  r[5] ? Number(r[5]) : null,
+    eurMarkup:r[6] ? Number(r[6]) : null,
+    detail:   r[7] || "",
+    createdAt:r[8] ? Number(r[8]) : 0
+  })).filter(x => x.id);
+}
+
+// ====== Sheets I/O（上書き保存・読み込み・初期化） ======
 async function appendRecordToSheet(rec){
   ensureAuthed();
   const values = [[
-    rec.id, rec.date, rec.type,
-    rec.amountJPY, rec.amountEUR ?? "",
-    rec.eurRate ?? "", rec.eurMarkup ?? "",
-    rec.detail ?? "", rec.createdAt
+    rec.id, rec.date, rec.type, rec.amountJPY, rec.amountEUR ?? "",
+    rec.eurRate ?? "", rec.eurMarkup ?? "", rec.detail ?? "", rec.createdAt
   ]];
   return gapi.client.sheets.spreadsheets.values.append({
     spreadsheetId: GSHEETS.SPREADSHEET_ID,
@@ -475,48 +496,32 @@ async function appendRecordToSheet(rec){
   });
 }
 
-// シート全体を読み込んで state.records を置き換え（replaceLocal=trueで置換）
 async function loadAllFromSheet(replaceLocal=false){
   ensureAuthed();
   const res = await gapi.client.sheets.spreadsheets.values.get({
     spreadsheetId: GSHEETS.SPREADSHEET_ID,
     range: "Sheet1!A1:Z100000"
   });
-
   const rows = res.result.values || [];
-  if (!rows.length) {
-    await ensureHeaderRow();
-    return;
-  }
-
-  // 1行目がヘッダーかどうか判定
+  if (!rows.length) { await ensureHeaderRow(); return; }
   let start = 0;
-  if (rows[0] && rows[0][0] === "id") start = 1;
-
+  if (rows[0][0] === "id") start = 1;
   const recs = rows.slice(start).map(r => ({
-    id: r[0],
-    date: r[1],
-    type: r[2],
-    amountJPY: Number(r[3]||0),
-    amountEUR: r[4] ? Number(r[4]) : null,
-    eurRate:  r[5] ? Number(r[5]) : null,
-    eurMarkup:r[6] ? Number(r[6]) : null,
-    detail:   r[7] || "",
-    createdAt:r[8] ? Number(r[8]) : Date.now()
+    id: r[0], date: r[1], type: r[2],
+    amountJPY: Number(r[3]||0), amountEUR: r[4] ? Number(r[4]) : null,
+    eurRate: r[5] ? Number(r[5]) : null, eurMarkup: r[6] ? Number(r[6]) : null,
+    detail: r[7] || "", createdAt: r[8] ? Number(r[8]) : Date.now()
   })).filter(x => x.id);
 
-  if (recs.length){
-    if (replaceLocal) {
-      state.records = recs.sort((a,b)=> b.createdAt - a.createdAt);
-      saveRecords(state.records);
-      syncUI();
-    }
-  } else {
+  if (recs.length && replaceLocal) {
+    state.records = recs.sort((a,b)=> (b.createdAt||0) - (a.createdAt||0));
+    saveRecords(state.records);
+    syncUI();
+  } else if (!recs.length) {
     await ensureHeaderRow();
   }
 }
 
-// ローカル全件をシートに反映（ヘッダー作成→本体一括書込）
 async function pushAllToSheet(){
   ensureAuthed();
   await clearSheet();
@@ -546,7 +551,6 @@ async function ensureHeaderRow(){
     resource: { values: header }
   });
 }
-
 async function clearSheet(){
   return gapi.client.sheets.spreadsheets.values.clear({
     spreadsheetId: GSHEETS.SPREADSHEET_ID,
@@ -554,6 +558,4 @@ async function clearSheet(){
   });
 }
 
-function ensureAuthed(){
-  if (!authed) throw new Error("サインインしていません");
-}
+function ensureAuthed(){ if (!authed) throw new Error("サインインしていません"); }
