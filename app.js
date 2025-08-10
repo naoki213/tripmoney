@@ -127,7 +127,6 @@ function highlightType(cat) {
     b.classList.toggle("active", b.textContent === cat);
   });
 }
-
 function initRate() {
   const eurRateInput = qs("#eurRateInput");
   const eff = qs("#effectiveRate");
@@ -197,15 +196,26 @@ function onSave() {
     createdAt: Date.now()
   };
 
+  // 先にローカル保存（キャンセルしても残る）
   state.records.unshift(rec);
   saveRecords(state.records);
 
-  // サインイン済みならSheetsにも追加
-  if (authed) {
-    appendRecordToSheet(rec)
-      .then(()=> cloudToast("Sheetsに保存しました"))
-      .catch(err=> cloudToast("Sheets保存失敗: " + err.message, false));
-  }
+  // 未ログインなら、この“クリック”をトリガーに同意ダイアログ→成功後に保存
+  (async () => {
+    try {
+      if (!authed) {
+        cloudToast("Googleにサインインしています…");
+        await ensureSignedIn("consent"); // ★ 保存クリック起因なのでポップアップOK
+      }
+      await appendRecordToSheet(rec);
+      cloudToast("Sheetsに保存しました");
+      // 好みで双方向同期したい場合は次行を有効化
+      // await twoWaySync();
+    } catch (e) {
+      cloudToast("クラウド保存できませんでした（ローカルには保存済み）", false);
+      console.error(e);
+    }
+  })();
 
   // 入力クリア（種類と日付は保持）
   qs("#amountJPY").value = "";
@@ -487,10 +497,39 @@ function handleSignoutClick(){
   cloudToast("サインアウトしました");
 }
 
+// ★ 保存時に使う：ユーザー操作起因でサインインを約束チェーンにする
+async function ensureSignedIn(promptMode = "consent") {
+  if (authed) return;
+  if (!tokenClient) throw new Error("認証クライアントの初期化前です");
+  const originalCb = tokenClient.callback;
+  const signedIn = new Promise((resolve, reject) => {
+    tokenClient.callback = (resp) => {
+      try {
+        if (resp && resp.access_token) {
+          authed = true;
+          setCloudButtons();
+          cloudToast("サインインしました");
+          // 元のcallbackにも渡す（初期同期や自動同期の起動を維持）
+          try { originalCb && originalCb(resp); } catch {}
+          resolve();
+        } else {
+          reject(new Error("アクセストークン取得に失敗"));
+        }
+      } finally {
+        tokenClient.callback = originalCb; // もとに戻す
+      }
+    };
+  });
+  tokenClient.requestAccessToken({ prompt: promptMode });
+  await signedIn;
+}
+
 // 手動「今すぐ同期」→ 双方向同期
 async function handleSyncClick(){
   try {
-    if (!authed) throw new Error("サインインしていません");
+    if (!authed) {
+      await ensureSignedIn("consent"); // 手動同期時も未ログインなら同意→同期
+    }
     if (tokenClient) { try { tokenClient.requestAccessToken({ prompt: '' }); } catch {} }
     await twoWaySync();
     cloudToast("Sheetsと双方向同期しました");
@@ -634,4 +673,3 @@ async function clearSheet(){
 }
 
 function ensureAuthed(){ if (!authed) throw new Error("サインインしていません"); }
-
